@@ -2,6 +2,8 @@
 Configuration settings for the Bitfinex Funding Monitor
 """
 
+import os  # Add import for environment variables
+
 # Monitoring settings
 MONITORING_INTERVAL_MINUTES = 30  # How often to check for status changes
 
@@ -21,9 +23,9 @@ NOTIFICATION_CHANNELS = {
         "smtp_password": "",
     },
     "telegram": {
-        "enabled": False,
-        "bot_token": "",
-        "chat_id": "",
+        "enabled": True,  # Enable Telegram notifications
+        "bot_token": os.getenv('TELEGRAM_BOT_TOKEN', ''),  # Load from environment variable
+        "chat_id": os.getenv('TELEGRAM_CHAT_ID', ''),  # Load from environment variable
     },
     "discord": {
         "enabled": False,

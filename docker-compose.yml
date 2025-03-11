@@ -1,0 +1,15 @@
+version: '3.8'
+
+services:
+  bitfinex-funding-bot:
+    build: .
+    container_name: bitfinex-funding-bot
+    env_file: .env
+    restart: unless-stopped
+    volumes:
+      - ./logs:/app/logs  # Mount logs directory for persistence
+    healthcheck:
+      test: ["CMD", "python", "-c", "import os; exit(0 if os.path.exists('/app/logs') else 1)"]
+      interval: 30s
+      timeout: 10s
+      retries: 3 

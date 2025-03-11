@@ -1,56 +1,75 @@
-# Bitfinex Funding Monitor
+# Bitfinex Funding Monitor Bot
 
-A Python bot that monitors your Bitfinex funding positions and sends notifications when lending status changes.
+A Telegram bot that monitors and manages Bitfinex funding positions.
 
-## Features
+## Prerequisites
 
-- Monitor all funds in your Bitfinex account
-- Track lending status changes
-- Send notifications through various channels (email, Telegram, etc.)
-- Configurable monitoring frequency
-- Detailed logging of status changes
+- Docker
+- Docker Compose
 
 ## Setup
 
-1. Clone this repository
-2. Install dependencies:
-   ```
-   pip install -r requirements.txt
-   ```
-3. Create a `.env` file with your Bitfinex API credentials:
-   ```
-   BITFINEX_API_KEY=your_api_key
-   BITFINEX_API_SECRET=your_api_secret
-   ```
-4. Configure notification settings in `config.py`
-5. Run the bot:
-   ```
-   python main.py
-   ```
+1. Clone the repository:
+```bash
+git clone <repository-url>
+cd bitfinex_funding
+```
 
-## Configuration
+2. Create your environment file:
+```bash
+cp .env.example .env
+```
 
-You can configure the bot by editing the `config.py` file:
+3. Edit the `.env` file with your credentials:
+- `TELEGRAM_BOT_TOKEN`: Your Telegram bot token from [@BotFather](https://t.me/botfather)
+- `TELEGRAM_CHAT_ID`: Your Telegram chat ID
+- `BITFINEX_API_KEY`: Your Bitfinex API key
+- `BITFINEX_API_SECRET`: Your Bitfinex API secret
 
-- Set the monitoring frequency
-- Configure notification channels
-- Customize notification messages
-- Set specific funds to monitor (or monitor all)
+## Running the Bot
 
-## Notification Channels
+1. Build and start the container:
+```bash
+docker-compose up -d
+```
 
-The bot supports multiple notification channels:
+2. View the logs:
+```bash
+docker-compose logs -f
+```
 
-- Email
-- Telegram
-- Discord
-- Slack
-- Desktop notifications
+3. Stop the bot:
+```bash
+docker-compose down
+```
 
-## Security Note
+## Commands
 
-Your API keys are stored locally in the `.env` file. Never share this file or commit it to version control. The bot only requires read permissions on your Bitfinex account for monitoring purposes.
+- `/start` or `/help` - Show available commands
+- `/status` - Show overall funding status
+- `/status [currency]` - Show funding status for specific currency
+- `/active` - Show active loans
+- `/offered` - Show offered funds
+- `/inactive` - Show inactive funds
 
-## License
+## Development
 
-MIT 
+To build the Docker image manually:
+```bash
+docker build -t bitfinex-funding-bot .
+```
+
+To run the container manually:
+```bash
+docker run --env-file .env bitfinex-funding-bot
+```
+
+## Logs
+
+Logs are stored in the `./logs` directory and are persisted even if the container is removed.
+
+## Security Notes
+
+- Never commit your `.env` file
+- Keep your API keys and secrets secure
+- The bot only responds to messages from the configured chat ID 

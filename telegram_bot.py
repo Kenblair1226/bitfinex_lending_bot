@@ -33,6 +33,9 @@ class TelegramBot:
         self.chat_id = os.getenv('TELEGRAM_CHAT_ID')
         self.bot = None
         self.is_running = False
+        self.should_stop = False
+        self.reconnect_delay = 1  # Initial delay in seconds
+        self.max_reconnect_delay = 300  # Maximum delay of 5 minutes
         
         if not self.bot_token or not self.chat_id:
             logger.warning("Telegram bot token or chat ID not set in .env file. Telegram bot commands will not be available.")
@@ -345,34 +348,77 @@ class TelegramBot:
             return
         
         self.is_running = True
+        self.should_stop = False
+        self.reconnect_delay = 1  # Reset reconnect delay
         
         def run_bot():
             logger.info("Starting Telegram bot polling")
-            try:
-                self.bot.infinity_polling(timeout=60, long_polling_timeout=30)
-            except Exception as e:
-                logger.error(f"Telegram bot polling error: {e}")
-                self.is_running = False
+            while not self.should_stop:
+                try:
+                    # Try to send startup message
+                    if not hasattr(self, 'startup_message_sent'):
+                        try:
+                            startup_message = "🤖 Bitfinex Funding Monitor Bot is now online!\nSend /help for available commands."
+                            self.bot.send_message(self.chat_id, startup_message)
+                            self.startup_message_sent = True
+                        except Exception as e:
+                            logger.error(f"Failed to send startup message: {e}")
+                    
+                    # Start polling
+                    self.bot.infinity_polling(timeout=60, long_polling_timeout=30)
+                except Exception as e:
+                    if self.should_stop:
+                        break
+                        
+                    logger.error(f"Telegram bot polling error: {e}")
+                    logger.info(f"Attempting to reconnect in {self.reconnect_delay} seconds...")
+                    
+                    # Wait before reconnecting
+                    time.sleep(self.reconnect_delay)
+                    
+                    # Exponential backoff with maximum delay
+                    self.reconnect_delay = min(self.reconnect_delay * 2, self.max_reconnect_delay)
+                    
+                    # Try to recreate the bot instance
+                    try:
+                        self.bot = telebot.TeleBot(self.bot_token)
+                        self._setup_commands()
+                        logger.info("Successfully recreated Telegram bot instance")
+                        self.reconnect_delay = 1  # Reset delay after successful reconnection
+                    except Exception as e:
+                        logger.error(f"Failed to recreate Telegram bot instance: {e}")
+                        continue
+            
+            self.is_running = False
+            logger.info("Telegram bot polling stopped")
         
         # Start the bot in a separate thread
-        bot_thread = threading.Thread(target=run_bot, daemon=True)
-        bot_thread.start()
-        
-        # Send startup message
-        try:
-            startup_message = "🤖 Bitfinex Funding Monitor Bot is now online!\nSend /help for available commands."
-            self.bot.send_message(self.chat_id, startup_message)
-        except Exception as e:
-            logger.error(f"Failed to send startup message: {e}")
+        self.bot_thread = threading.Thread(target=run_bot, daemon=True)
+        self.bot_thread.start()
     
     def stop(self):
         """Stop the Telegram bot"""
-        if not self.is_running or not self.bot:
+        if not self.is_running:
             return
-        
+            
         logger.info("Stopping Telegram bot")
+        self.should_stop = True
+        
+        try:
+            # Try to send shutdown message
+            shutdown_message = "🔌 Bitfinex Funding Monitor Bot is going offline. Goodbye!"
+            self.bot.send_message(self.chat_id, shutdown_message)
+        except Exception as e:
+            logger.error(f"Failed to send shutdown message: {e}")
+        
+        # Stop the polling
         try:
             self.bot.stop_polling()
-            self.is_running = False
         except Exception as e:
-            logger.error(f"Error stopping Telegram bot: {e}") 
+            logger.error(f"Error stopping bot polling: {e}")
+        
+        # Wait for the thread to finish
+        if hasattr(self, 'bot_thread'):
+            self.bot_thread.join(timeout=5)
+            
+        self.is_running = False 
