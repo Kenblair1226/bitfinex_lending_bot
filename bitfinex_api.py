@@ -437,3 +437,76 @@ class BitfinexAPI:
         except Exception as e:
             logger.error(f"Error compiling funding status: {e}")
             return {} 
+    
+    def get_market_lending_rates(self, currencies=None) -> Dict[str, Dict[str, Any]]:
+        """
+        Get current market lending rates for specified currencies
+        
+        Args:
+            currencies: List of currency codes to get rates for. If None, gets rates for all currencies with active loans.
+        
+        Returns:
+            Dict mapping currency code to rate details
+        """
+        try:
+            # If no currencies specified, get all currencies with active loans
+            if not currencies:
+                funding_status = self.get_funding_status()
+                currencies = [curr for curr, status in funding_status.items() 
+                             if status.get('lending_status') == 'active']
+            
+            market_rates = {}
+            
+            # According to Bitfinex API docs, funding tickers use format "f" + currency (e.g., fUSD)
+            # We'll use the public ticker endpoint which doesn't require authentication
+            base_url = "https://api-pub.bitfinex.com/v2"
+            
+            for currency in currencies:
+                try:
+                    # Format the symbol according to Bitfinex API docs
+                    symbol = f'f{currency}'
+                    
+                    # Use the public ticker endpoint
+                    endpoint = f"/ticker/{symbol}"
+                    url = f"{base_url}{endpoint}"
+                    
+                    logger.info(f"Fetching funding ticker for {symbol} from {url}")
+                    response = requests.get(url)
+                    
+                    if response.status_code == 200:
+                        # Parse the response
+                        # Funding ticker format: [FRR, BID, BID_PERIOD, BID_SIZE, ASK, ASK_PERIOD, ASK_SIZE, DAILY_CHANGE, DAILY_CHANGE_RELATIVE, LAST_PRICE, VOLUME, HIGH, LOW]
+                        data = response.json()
+                        
+                        if isinstance(data, list) and len(data) >= 10:
+                            # Extract the relevant fields
+                            frr = float(data[0]) if data[0] is not None else 0  # Flash Return Rate
+                            bid = float(data[1]) if data[1] is not None else 0  # Bid rate
+                            ask = float(data[4]) if data[4] is not None else 0  # Ask rate
+                            last = float(data[9]) if data[9] is not None else 0  # Last price
+                            high = float(data[11]) if len(data) > 11 and data[11] is not None else 0  # High
+                            low = float(data[12]) if len(data) > 12 and data[12] is not None else 0  # Low
+                            
+                            # Convert daily rates to APR (multiply by 365 for days in year, 100 for percentage)
+                            market_rates[currency] = {
+                                'frr_rate': round(frr * 365 * 100, 2),  # Flash Return Rate as APR
+                                'bid_rate': round(bid * 365 * 100, 2),  # Bid rate as APR
+                                'ask_rate': round(ask * 365 * 100, 2),  # Ask rate as APR
+                                'last_rate': round(last * 365 * 100, 2),  # Last rate as APR
+                                'high_rate': round(high * 365 * 100, 2),  # High as APR
+                                'low_rate': round(low * 365 * 100, 2),  # Low as APR
+                                'timestamp': int(time.time() * 1000)
+                            }
+                            logger.info(f"Successfully fetched rates for {currency}: {market_rates[currency]}")
+                        else:
+                            logger.warning(f"Unexpected response format for {currency}: {data}")
+                    else:
+                        logger.warning(f"Failed to fetch rates for {currency}: HTTP {response.status_code} - {response.text}")
+                except Exception as e:
+                    logger.warning(f"Error fetching market rate for {currency}: {e}")
+                    continue
+            
+            return market_rates
+        except Exception as e:
+            logger.error(f"Error fetching market lending rates: {e}")
+            return {}

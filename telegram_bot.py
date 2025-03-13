@@ -53,6 +53,23 @@ class TelegramBot:
         if not self.bot:
             return
         
+        # Register commands with Telegram to create a menu
+        commands = [
+            telebot.types.BotCommand('/start', 'Start the bot and show help'),
+            telebot.types.BotCommand('/status', 'Show overall funding status'),
+            telebot.types.BotCommand('/active', 'Show active loans'),
+            telebot.types.BotCommand('/offered', 'Show offered funds'),
+            telebot.types.BotCommand('/inactive', 'Show inactive funds'),
+            telebot.types.BotCommand('/rates', 'Show current market lending rates'),
+            telebot.types.BotCommand('/help', 'Show help message')
+        ]
+        
+        try:
+            self.bot.set_my_commands(commands)
+            logger.info("Telegram command menu registered successfully")
+        except Exception as e:
+            logger.error(f"Failed to register command menu: {e}")
+        
         @self.bot.message_handler(commands=['start', 'help'])
         def handle_start_help(message):
             if str(message.chat.id) != self.chat_id:
@@ -68,6 +85,7 @@ class TelegramBot:
                 "/active - Show active loans\n"
                 "/offered - Show offered funds\n"
                 "/inactive - Show inactive funds\n"
+                "/rates - Show current market lending rates for active currencies\n"
                 "/help - Show this help message"
             )
             self.bot.reply_to(message, help_text)
@@ -127,6 +145,19 @@ class TelegramBot:
                 self._send_filtered_status(message.chat.id, "inactive")
             except Exception as e:
                 error_msg = f"Error getting inactive funds: {e}"
+                logger.error(error_msg)
+                self.bot.send_message(message.chat.id, error_msg)
+        
+        @self.bot.message_handler(commands=['rates'])
+        def handle_rates(message):
+            if str(message.chat.id) != self.chat_id:
+                self.bot.reply_to(message, "Unauthorized access denied.")
+                return
+                
+            try:
+                self._send_market_rates(message.chat.id)
+            except Exception as e:
+                error_msg = f"Error getting market rates: {e}"
                 logger.error(error_msg)
                 self.bot.send_message(message.chat.id, error_msg)
     
@@ -335,6 +366,105 @@ class TelegramBot:
         if len(message) > 4000:
             message = message[:3950] + "...\n\n(Message truncated due to length)"
             
+        self.bot.send_message(chat_id, message, parse_mode="Markdown")
+    
+    def _send_market_rates(self, chat_id):
+        # Get funding status to identify active and offered currencies
+        funding_status = self.bitfinex.get_funding_status()
+        
+        # Find currencies with active loans or offers
+        active_currencies = [curr for curr, status in funding_status.items() 
+                           if status.get('lending_status') == 'active']
+        offered_currencies = [curr for curr, status in funding_status.items() 
+                            if status.get('offered_amount', 0) > 0]
+        
+        # Combine unique currencies from both lists
+        currencies_to_check = list(set(active_currencies + offered_currencies))
+        
+        # If no active or offered currencies, default to USD and USDT
+        if not currencies_to_check:
+            currencies_to_check = ['USD', 'UST']
+            self.bot.send_message(chat_id, "ℹ️ No active loans or offers found. Showing rates for USD and USDT.", parse_mode="Markdown")
+        
+        # Get market rates for these currencies
+        market_rates = self.bitfinex.get_market_lending_rates(currencies_to_check)
+        
+        if not market_rates:
+            self.bot.send_message(chat_id, "❌ Failed to retrieve market rates. Please try again later.", parse_mode="Markdown")
+            return
+        
+        # Format and send the message
+        message = "📊 *Current Lending Rates*\n\n"
+        
+        # First show active loans with their rates
+        if active_currencies:
+            message += "*Active Loans*\n"
+            for currency in active_currencies:
+                if currency in market_rates:
+                    status = funding_status[currency]
+                    user_rate = status.get('avg_rate', 0)
+                    market_rate = market_rates[currency].get('frr_rate', 0)  # Use FRR as primary reference
+                    bid_rate = market_rates[currency].get('bid_rate', 0)
+                    ask_rate = market_rates[currency].get('ask_rate', 0)
+                    high_rate = market_rates[currency].get('high_rate', 0)
+                    low_rate = market_rates[currency].get('low_rate', 0)
+                    
+                    # Determine if user's rate is competitive
+                    if user_rate >= market_rate:
+                        rate_indicator = "🟢"  # Green circle for good rate
+                    elif user_rate >= bid_rate:
+                        rate_indicator = "⚪"  # White circle for average rate
+                    else:
+                        rate_indicator = "🔴"  # Red circle for below-market rate
+                    
+                    message += f"{rate_indicator} *{currency}*: Your rate: {user_rate:.2f}% | Market: {market_rate:.2f}% | Range: {bid_rate:.2f}%-{ask_rate:.2f}% | 24h: {low_rate:.2f}%-{high_rate:.2f}%\n"
+            message += "\n"
+        
+        # Then show offered funds with their rates
+        if offered_currencies:
+            message += "*Offered Funds*\n"
+            for currency in offered_currencies:
+                if currency in market_rates:
+                    status = funding_status[currency]
+                    user_rate = status.get('offered_rate', 0)
+                    market_rate = market_rates[currency].get('frr_rate', 0)  # Use FRR as primary reference
+                    bid_rate = market_rates[currency].get('bid_rate', 0)
+                    ask_rate = market_rates[currency].get('ask_rate', 0)
+                    high_rate = market_rates[currency].get('high_rate', 0)
+                    low_rate = market_rates[currency].get('low_rate', 0)
+                    
+                    # Determine if user's rate is competitive
+                    if user_rate <= market_rate:
+                        rate_indicator = "🟢"  # Green circle for good rate
+                    elif user_rate <= ask_rate:
+                        rate_indicator = "⚪"  # White circle for average rate
+                    else:
+                        rate_indicator = "🔴"  # Red circle for above-market rate
+                    
+                    message += f"{rate_indicator} *{currency}*: Your rate: {user_rate:.2f}% | Market: {market_rate:.2f}% | Range: {bid_rate:.2f}%-{ask_rate:.2f}% | 24h: {low_rate:.2f}%-{high_rate:.2f}%\n"
+            message += "\n"
+        
+        # If we're showing default currencies (no active loans or offers)
+        if not active_currencies and not offered_currencies:
+            message += "*Market Rates*\n"
+            for currency in currencies_to_check:
+                if currency in market_rates:
+                    market_rate = market_rates[currency].get('frr_rate', 0)  # FRR (Flash Return Rate)
+                    bid_rate = market_rates[currency].get('bid_rate', 0)     # Bid rate
+                    ask_rate = market_rates[currency].get('ask_rate', 0)     # Ask rate
+                    high_rate = market_rates[currency].get('high_rate', 0)   # 24h high
+                    low_rate = market_rates[currency].get('low_rate', 0)     # 24h low
+                    
+                    message += f"*{currency}*: FRR: {market_rate:.2f}% | Range: {bid_rate:.2f}%-{ask_rate:.2f}% | 24h: {low_rate:.2f}%-{high_rate:.2f}%\n"
+        
+        # Add explanation of indicators
+        if active_currencies or offered_currencies:
+            message += "\n*Rate Indicators*:\n"
+            message += "🟢 - Your rate is better than market\n"
+            message += "⚪ - Your rate is average\n"
+            message += "🔴 - Your rate is below market\n"
+        
+        # Send the message
         self.bot.send_message(chat_id, message, parse_mode="Markdown")
     
     def start(self):
